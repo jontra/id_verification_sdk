@@ -160,7 +160,7 @@ src/
 
   ocr/
     ocr-engine.ts              // Tesseract.js wrapper: init/warmup, recognize, dispose
-    preprocess.ts              // grayscale, threshold, resize, (light) deskew
+                               //   uses PSM.AUTO (see note below); no pre-binarization
 
   mrz/
     mrz-locate.ts              // find the MRZ band region
@@ -200,12 +200,14 @@ interface Extractor {
 }
 
 interface ExtractionOutput {
-  number: string | null;
+  candidates: string[];           // ALL number strings found — extractor does not pick or compare
   confidence: number;             // extraction confidence
-  signals: AuthenticitySignal[];  // extractor contributes authenticity evidence
+  signals: AuthenticitySignal[];  // claim-independent authenticity evidence
   reasons: Reason[];
 }
 ```
+
+**Separation of concerns (important):** the extractor only *finds* number strings; it does not decide which is "the" number, validate it against the claim, or pick by check digit. A document often shows several numbers (e.g. an Israeli licence prints both the ID and the licence number). The **flow** does claim-aware selection — it picks the candidate with the smallest fuzzy distance to the claimed number — so the right one is chosen without the extractor knowing anything about the claim. Validity (check digit / MRZ checksum) is reported only as a claim-independent **authenticity signal**, not used to pick the number.
 
 ## 5. Pipeline flow
 
@@ -213,11 +215,11 @@ interface ExtractionOutput {
 verify(input)
   1. normalize image           image/image-input.ts   → NormalizedImage (or IMAGE_DECODE_FAILED)
   2. select extractor          extractors/registry    → by documentType
-  3. extract                   extractor.extract()    → {number, confidence, signals, reasons}
-       passport → MRZ locate → OCR band (OCR-B) → mrz-parse
-       id       → preprocess → OCR full → find 9-digit runs → check-digit filter
+  3. extract                   extractor.extract()    → {candidates[], confidence, signals, reasons}
+       passport → MRZ locate → OCR → mrz-parse → [documentNumber]
+       id       → OCR full page (PSM.AUTO) → all digit runs as candidates
   4. authenticity              authenticity.ts        → certificate (weighted signals)
-  5. number match              fuzzy-match.ts         → {matched, mode, digitDifference}
+  5. select + number match     fuzzy-match.ts         → candidate closest to claim → {matched, mode, digitDifference}
   6. derive decision + shape   verify()               → VerificationResult
 ```
 
@@ -269,6 +271,11 @@ Rationale: client-side signing can't be a trust anchor — the key would ship in
 | MRZ band OCR | Tesseract `eng` / OCR-B | — | reuse OCR engine on located band |
 | Build | tsup / Vite lib mode | — | ESM + types |
 | Demo | Vite + React | — | minimal upload→result page |
+
+**OCR configuration (learned from real photos):**
+- **Page segmentation = `PSM.AUTO`.** Tesseract.js defaults to `SINGLE_BLOCK`, which assumes one uniform block of text and fails on multi-field ID/licence layouts — especially angled real-world photos (it returned zero digits on a real licence). `AUTO` segments the page into regions and reliably finds the document number.
+- **No pre-binarization.** We feed Tesseract the decoded image and rely on its internal adaptive binarization. A global Otsu threshold (an earlier idea) hurts on uneven lighting / busy backgrounds; Tesseract's adaptive method is better. (This is why there is no `preprocess.ts`.)
+- **Known limit:** heavily rotated / cropped-out / low-contrast captures still read poorly. Robustness there needs document detection + deskew/crop — overlaps with the Section 14 stretch detector and is out of baseline scope.
 
 **Baseline (v1) ships without an on-device detector** — authenticity is the heuristic in Section 6. The detector is a **stretch goal (Section 14)**, implemented last if time permits, and added via these libs:
 

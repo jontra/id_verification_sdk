@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   detectIdKeywords,
   extractIdCandidates,
-  pickIsraeliId,
 } from '../src/extractors/israeli-id.extractor.js';
 
 describe('detectIdKeywords', () => {
@@ -28,22 +27,12 @@ describe('extractIdCandidates', () => {
   it('ignores short runs', () => {
     expect(extractIdCandidates('abc 12 34')).toEqual([]);
   });
-});
 
-describe('pickIsraeliId', () => {
-  it('selects the candidate passing the check digit', () => {
-    expect(pickIsraeliId(['01011990', '123456782'])).toEqual({
-      number: '123456782',
-      valid: true,
-    });
-  });
-  it('falls back to the longest candidate when none validate', () => {
-    expect(pickIsraeliId(['12345', '123456789'])).toEqual({
-      number: '123456789',
-      valid: false,
-    });
-  });
-  it('returns null when there are no candidates', () => {
-    expect(pickIsraeliId([])).toEqual({ number: null, valid: false });
+  it('returns every distinct number on the card (ID + licence number)', () => {
+    // The licence shows both the ID (field 8) and the licence number (field 4d).
+    expect(extractIdCandidates('4d 6890768 ... 8. ID 034521971')).toEqual([
+      '6890768',
+      '034521971',
+    ]);
   });
 });

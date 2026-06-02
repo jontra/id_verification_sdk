@@ -58,7 +58,7 @@ export class PassportMrzExtractor implements Extractor {
       : [reason('MRZ_CHECKSUM_FAILED')];
 
     return {
-      number: best.documentNumber,
+      candidates: [best.documentNumber],
       confidence: best.checkDigitsValid ? 0.95 : 0.3,
       signals,
       reasons,
@@ -68,7 +68,7 @@ export class PassportMrzExtractor implements Extractor {
 
 function fail(reasons: Reason[]): ExtractionOutput {
   return {
-    number: null,
+    candidates: [],
     confidence: 0,
     signals: [{ kind: 'mrz_present', passed: false, weight: 0.4 }],
     reasons,

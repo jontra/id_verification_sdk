@@ -65,6 +65,14 @@ describe('verify() — Israeli ID path', () => {
     expect(r.decision).toBe('error');
     expect(r.reasons.some((x) => x.code === 'NO_NUMBER_FOUND')).toBe(true);
   });
+
+  it('selects the ID, not the licence number, when both are present', async () => {
+    // Real-licence bug: card shows licence no. 6890768 AND ID 034521971.
+    const text = 'מדינת ישראל רישיון נהיגה 4d 6890768 8. ID 034521971';
+    const r = await run(text, 'id', '034521971');
+    expect(r.numberMatch.extractedNumber).toBe('034521971');
+    expect(r.decision).toBe('verified');
+  });
 });
 
 describe('verify() — passport path', () => {

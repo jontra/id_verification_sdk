@@ -58,8 +58,8 @@ describe('real OCR — specimen Israeli driving licence', () => {
     expect(ocr.text).toMatch(/ISRAEL/i);
   });
 
-  it('extracts the printed 9-digit ID number', () => {
-    expect(output.number).toBe('123456789');
+  it('extracts the printed 9-digit ID number as a candidate', () => {
+    expect(output.candidates).toContain('123456789');
   });
 
   it('detects ID/licence keywords', () => {

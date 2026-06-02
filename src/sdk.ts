@@ -25,7 +25,7 @@ import { OcrEngine } from './ocr/ocr-engine.js';
 import { toNormalizedImage, ImageDecodeError } from './image/image-input.js';
 import { buildCertificate } from './authenticity/authenticity.js';
 import { aspectRatioSignal } from './authenticity/signals.js';
-import { fuzzyMatch, normalizeForMatch } from './matching/fuzzy-match.js';
+import { fuzzyMatch, normalizeForMatch, type FuzzyMatchResult } from './matching/fuzzy-match.js';
 import { reason, SdkInputError } from './utils/errors.js';
 import { weightedScore } from './utils/confidence.js';
 
@@ -138,20 +138,24 @@ export function createIdVerifier(
     ];
 
     // 3. No number extracted → processing error (never a fake pass).
-    if (extraction.number === null) {
+    if (extraction.candidates.length === 0) {
       return finish('error', signals, noMatch(claimedNorm), extraction.reasons, 0);
     }
 
-    // 4. Number match.
-    const extractedNorm = normalizeExtracted(input.documentType, extraction.number);
-    const fm = fuzzyMatch(claimedNorm, extractedNorm, fuzzyTolerance);
+    // 4. Claim-aware selection: pick the candidate that best matches the claim
+    //    (a document may show several numbers, e.g. ID vs licence number).
+    const best = selectBestMatch(
+      claimedNorm,
+      extraction.candidates.map((c) => normalizeExtracted(input.documentType, c)),
+      fuzzyTolerance,
+    );
     const numberMatch: NumberMatch = {
-      matched: fm.matched,
-      mode: fm.mode,
-      digitDifference: fm.difference,
-      extractedNumber: extractedNorm,
+      matched: best.fm.matched,
+      mode: best.fm.mode,
+      digitDifference: best.fm.difference,
+      extractedNumber: best.value,
       claimedNumber: claimedNorm,
-      confidence: fm.matched ? (fm.mode === 'exact' ? 0.99 : 0.85) : 0.2,
+      confidence: best.fm.matched ? (best.fm.mode === 'exact' ? 0.99 : 0.85) : 0.2,
     };
 
     // 5. Authenticity + decision.
@@ -211,6 +215,23 @@ function normalizeExtracted(
   return documentType === 'passport'
     ? normalizeForMatch(extracted, { alphanumeric: true })
     : normalizeForMatch(extracted, { padLength: 9 });
+}
+
+/**
+ * Pick the candidate closest to the claimed number (smallest digit difference).
+ * `candidates` must be non-empty and already normalized for comparison.
+ */
+function selectBestMatch(
+  claim: string,
+  candidates: string[],
+  tolerance: number,
+): { value: string; fm: FuzzyMatchResult } {
+  let best: { value: string; fm: FuzzyMatchResult } | null = null;
+  for (const value of candidates) {
+    const fm = fuzzyMatch(claim, value, tolerance);
+    if (!best || fm.difference < best.fm.difference) best = { value, fm };
+  }
+  return best!;
 }
 
 function noMatch(claimed: string): NumberMatch {

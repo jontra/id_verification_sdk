@@ -34,11 +34,15 @@ export interface OcrWord {
 }
 
 export interface ExtractionOutput {
-  /** Normalized extracted number, or null if none found. */
-  number: string | null;
+  /**
+   * Raw number strings found in the image. The extractor does NOT decide which
+   * one is "the" number or compare it to the claim — the flow selects the best
+   * match against the claimed number. Empty when nothing was found.
+   */
+  candidates: string[];
   /** Extraction confidence in [0, 1]. */
   confidence: number;
-  /** Authenticity evidence the extractor observed. */
+  /** Authenticity evidence the extractor observed (claim-independent). */
   signals: AuthenticitySignal[];
   reasons: Reason[];
 }
