@@ -41,7 +41,7 @@ Build order + checklist. Detail lives in [DESIGN.md](./DESIGN.md). Boxes get tic
 
 ## Phase 7 — Demo & docs
 - [x] React demo SPA (upload + number + type → result viewer); bundles clean
-- [ ] Fill README placeholders (package name, license) — _intentionally left as placeholders per request_
+- [x] Fill README placeholders (package name `id-verification-sdk`, license UNLICENSED)
 
 ## Phase 8 — STRETCH (only if time permits) — [DESIGN.md §14](./DESIGN.md#14-stretch--on-device-detector-does-it-look-like-a-real-id)
 - [ ] `detector/` — ONNX Runtime Web + `id-card-yolo`; `id_structure` / `face_present` signals

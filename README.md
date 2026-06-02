@@ -28,13 +28,13 @@ See [DESIGN.md § Privacy enforcement](./DESIGN.md#10-privacy-enforcement-must-b
 ## Install
 
 ```bash
-npm install @org/id-verification-sdk
+npm install id-verification-sdk
 ```
 
 ## Quick start
 
 ```ts
-import { createIdVerifier } from '@org/id-verification-sdk';
+import { createIdVerifier } from 'id-verification-sdk';
 
 const verifier = await createIdVerifier();
 
@@ -109,4 +109,4 @@ npm run build     # build the library
 
 ## License
 
-TBD.
+UNLICENSED — proprietary. Not licensed for redistribution.

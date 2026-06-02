@@ -1,7 +1,9 @@
 {
-  "name": "@org/id-verification-sdk",
+  "name": "id-verification-sdk",
   "version": "0.0.0",
   "description": "Client-side identity document verification SDK (browser, no upload).",
+  "license": "UNLICENSED",
+  "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
