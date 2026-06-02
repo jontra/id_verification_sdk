@@ -7,7 +7,7 @@
  * - Assets are loaded from `modelBaseUrl` when provided, so they can be
  *   self-hosted same-origin (privacy: no third-party CDN at runtime).
  */
-import { createWorker, type Worker } from 'tesseract.js';
+import { createWorker, PSM, type Worker } from 'tesseract.js';
 import type { OcrRunner, OcrResult } from '../extractors/extractor.js';
 import type { NormalizedImage } from '../image/image-input.js';
 
@@ -45,11 +45,13 @@ export class OcrEngine implements OcrRunner {
         }
       : undefined;
 
-    this.initPromise = createWorker(this.languages, undefined, options).then((w) => {
+    this.initPromise = (async () => {
+      const w = await createWorker(this.languages, undefined, options);
+      await applyParams(w);
       this.worker = w;
       this.activeLang = this.languages.join('+');
       return w;
-    });
+    })();
     return this.initPromise;
   }
 
@@ -62,6 +64,7 @@ export class OcrEngine implements OcrRunner {
     const requested = (opts?.languages ?? this.languages).join('+');
     if (requested !== this.activeLang) {
       await worker.reinitialize(requested);
+      await applyParams(worker); // reinitialize resets parameters
       this.activeLang = requested;
     }
 
@@ -84,6 +87,16 @@ export class OcrEngine implements OcrRunner {
     this.initPromise = null;
     if (worker) await worker.terminate();
   }
+}
+
+/**
+ * Use full automatic page segmentation. Tesseract.js defaults to SINGLE_BLOCK,
+ * which assumes one uniform text block and fails on multi-field ID/licence
+ * layouts (especially real photos) — AUTO segments the page into regions and
+ * reliably picks up the document number.
+ */
+async function applyParams(worker: Worker): Promise<void> {
+  await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
 }
 
 /** Tesseract reports confidence as 0–100; normalize to [0, 1]. */

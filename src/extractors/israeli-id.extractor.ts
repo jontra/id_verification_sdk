@@ -13,7 +13,6 @@ import type {
   ExtractionOutput,
 } from './extractor.js';
 import { isValidIsraeliId, normalizeIsraeliId } from '../validation/israeli-id.js';
-import { preprocessForOcr } from '../ocr/preprocess.js';
 import { reason } from '../utils/errors.js';
 
 /** Hebrew/English markers found on Israeli IDs and driver's licenses. */
@@ -53,8 +52,9 @@ export class IsraeliIdExtractor implements Extractor {
     image: NormalizedImage,
     ctx: ExtractContext,
   ): Promise<ExtractionOutput> {
-    const prepared = safePreprocess(image);
-    const ocr = await ctx.ocr.recognize(prepared, { languages: ['heb', 'eng'] });
+    // Feed Tesseract the decoded image directly — it performs its own adaptive
+    // binarization, which beats a global threshold on uneven real-world photos.
+    const ocr = await ctx.ocr.recognize(image, { languages: ['heb', 'eng'] });
 
     const candidates = extractIdCandidates(ocr.text);
     const { number, valid } = pickIsraeliId(candidates);
@@ -81,15 +81,5 @@ export class IsraeliIdExtractor implements Extractor {
       number === null ? 0 : valid ? Math.min(0.95, 0.6 + ocr.confidence * 0.35) : 0.25;
 
     return { number, confidence, signals, reasons };
-  }
-}
-
-/** Binarize for OCR when ImageData is available; otherwise pass through. */
-function safePreprocess(image: NormalizedImage): NormalizedImage {
-  if (typeof ImageData === 'undefined') return image;
-  try {
-    return preprocessForOcr(image);
-  } catch {
-    return image;
   }
 }
