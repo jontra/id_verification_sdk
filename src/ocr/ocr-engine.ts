@@ -65,7 +65,7 @@ export class OcrEngine implements OcrRunner {
       this.activeLang = requested;
     }
 
-    const imageLike = (image.canvas ?? image.pixels) as Parameters<Worker['recognize']>[0];
+    const imageLike = toRecognizable(image) as Parameters<Worker['recognize']>[0];
     const { data } = await worker.recognize(imageLike);
 
     return {
@@ -90,4 +90,31 @@ export class OcrEngine implements OcrRunner {
 function clampConfidence(value: number): number {
   const n = value / 100;
   return n < 0 ? 0 : n > 1 ? 1 : n;
+}
+
+/**
+ * Tesseract.js accepts a canvas/Blob/data-URL but NOT raw ImageData. Preprocessed
+ * images carry only `pixels`, so draw them onto a canvas before recognition.
+ */
+function toRecognizable(image: NormalizedImage): OffscreenCanvas | HTMLCanvasElement {
+  if (image.canvas) return image.canvas;
+  const { width, height, pixels } = image;
+
+  if (typeof OffscreenCanvas !== 'undefined') {
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('OffscreenCanvas 2D context unavailable for OCR input.');
+    ctx.putImageData(pixels, 0, 0);
+    return canvas;
+  }
+  if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas 2D context unavailable for OCR input.');
+    ctx.putImageData(pixels, 0, 0);
+    return canvas;
+  }
+  throw new Error('No canvas available to prepare the OCR input.');
 }
