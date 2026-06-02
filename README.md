@@ -83,6 +83,10 @@ Authenticity is a **heuristic** (valid number + document keywords + OCR quality)
 
 It does **not** detect forgery, photo substitution, holograms, or a printed/screenshot copy — and a hand-made document with a checksum-valid number can pass. Treat the result as plausibility screening, not proof of genuineness. Full threat discussion: [DESIGN.md § Authenticity heuristic](./DESIGN.md#6-authenticity-heuristic-be-explicit-about-limits).
 
+**Planned extension:** an optional on-device object detector (YOLO via ONNX Runtime Web) that checks the image actually *looks like* an ID — card layout plus a **portrait/face region**. This raises the bar against text-only forgeries (e.g. pen-and-paper), since a scribbled page has no face to detect. It still confirms "looks like an ID," not genuineness.
+
+Beyond a generic detector, the model could be **fine-tuned on Israeli ID cards and driver's licenses** to recognize the specific template (expected layout and field positions) — strengthening the authenticity check and letting us crop the ID-number region for more reliable OCR. The main blocker is data: this requires a labeled dataset of real Israeli IDs, which is privacy-sensitive and hard to source. Details: [DESIGN.md § STRETCH — on-device detector](./DESIGN.md#14-stretch--on-device-detector-does-it-look-like-a-real-id).
+
 ## Browser support
 
 Desktop **Chrome** and **Safari**. Uses `createImageBitmap`/`OffscreenCanvas` with a `<canvas>` fallback for Safari. See [DESIGN.md § Cross-browser notes](./DESIGN.md#11-cross-browser-notes).
