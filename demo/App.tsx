@@ -9,6 +9,11 @@ const DECISION_COLORS: Record<VerificationResult['decision'], string> = {
   error: '#57606a',
 };
 
+/** Image formats every target browser (Chrome + Safari) can decode reliably. */
+const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const ACCEPT_ATTR = ACCEPTED_TYPES.join(',');
+const SUPPORTED_LABEL = 'JPEG, PNG, WebP';
+
 export function App() {
   const verifierRef = useRef<IdVerifier | null>(null);
   const [documentType, setDocumentType] = useState<DocumentType>('id');
@@ -21,6 +26,20 @@ export function App() {
   function getVerifier(): IdVerifier {
     if (!verifierRef.current) verifierRef.current = createIdVerifier();
     return verifierRef.current;
+  }
+
+  function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0] ?? null;
+    if (f && !ACCEPTED_TYPES.includes(f.type)) {
+      setError(
+        `Unsupported file type${f.type ? ` (${f.type})` : ''}. Supported: ${SUPPORTED_LABEL}. HEIC is not supported.`,
+      );
+      setFile(null);
+      e.target.value = '';
+      return;
+    }
+    setError(null);
+    setFile(f);
   }
 
   async function onVerify() {
@@ -72,7 +91,11 @@ export function App() {
 
         <label>
           Document image{' '}
-          <input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          <input type="file" accept={ACCEPT_ATTR} onChange={onFileChange} />
+          <div style={{ color: '#57606a', fontSize: '0.85em', marginTop: '0.25rem' }}>
+            Supported formats: {SUPPORTED_LABEL}. HEIC (iPhone) is not supported — convert to
+            JPEG/PNG first.
+          </div>
         </label>
 
         <button onClick={onVerify} disabled={busy} style={{ padding: '0.5rem 1rem', width: 'fit-content' }}>

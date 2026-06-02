@@ -314,6 +314,21 @@ Rationale — DIY is cheap *because the target is narrow* (desktop Chrome + Safa
 
 When to switch to **`blueimp-load-image`** instead: if the Safari fallback path gets fiddly, or we'd rather spend the time box on verification logic than canvas-orientation quirks. It does `File/Blob` → canvas + EXIF orientation + resize in one. Alternatives if only one concern arises: **`exifr`** (orientation only), **`pica`** (high-quality downscale). Either DIY or blueimp is a defensible, low-risk choice for this scope.
 
+### Supported formats & HEIC (future work)
+
+**Supported: JPEG, PNG, WebP** — formats both target browsers decode natively via `createImageBitmap`/canvas. **HEIC** (default iPhone format) is intentionally **out of scope**: Chrome has no HEIC codec, so decode throws and we surface `IMAGE_DECODE_FAILED`. (Safari can decode HEIC natively, so behavior would otherwise be inconsistent across the two target browsers.) The demo's file picker is restricted to the supported types and rejects others with an explicit message; the SDK fails fast — never a silent pass.
+
+**To add HEIC support later** (all client-side, preserves the no-upload guarantee):
+1. Add a WASM HEIC decoder — **`heic2any`** (wraps **libheif**). Note **libheif is LGPL** (cf. the AGPL note for the YOLO detector in Section 9) — fine to use, but flag it if statically bundling into a closed product.
+2. In `image/image-input.ts`, before the existing decode, detect HEIC (`type` is `image/heic`/`image/heif`, or a `.heic`/`.heif` filename) and convert:
+   ```ts
+   if (isHeic(input)) input = await heic2any({ blob: input, toType: 'image/jpeg' });
+   // …then fall through to the normal createImageBitmap/canvas path
+   ```
+3. **Lazy-import** `heic2any` so the multi-MB WASM only loads when a HEIC is actually provided (zero cost for the common JPEG/PNG path).
+
+Trade-offs: libheif WASM adds a few MB; conversion is an extra decode + JPEG re-encode (lossy, slower) before OCR. Cheaper non-goal alternative: keep the explicit "convert to JPEG/PNG" error and let users/iOS handle conversion.
+
 ## 12. Open questions (to resolve while iterating)
 
 1. Fuzzy match — allow a single insert/delete (Levenshtein-1) or strict Hamming only?

@@ -91,6 +91,10 @@ Beyond a generic detector, the model could be **fine-tuned on Israeli ID cards a
 
 Desktop **Chrome** and **Safari**. Uses `createImageBitmap`/`OffscreenCanvas` with a `<canvas>` fallback for Safari. See [DESIGN.md § Cross-browser notes](./DESIGN.md#11-cross-browser-notes).
 
+### Supported image formats
+
+**JPEG, PNG, WebP** — formats both target browsers decode natively. **HEIC** (the default iPhone format) is **not supported**: Chrome cannot decode it, so pass JPEG/PNG/WebP instead. Unsupported inputs fail fast with an explicit error (`IMAGE_DECODE_FAILED`) — never a silent pass. The demo's file picker is restricted to the supported types.
+
 ## Demo
 
 A minimal React SPA to upload a document, enter a number, pick a type, and see the result.
