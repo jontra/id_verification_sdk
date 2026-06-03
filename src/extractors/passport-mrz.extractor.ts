@@ -1,6 +1,11 @@
 /**
- * Passport extractor (documentType 'passport') — DESIGN.md §5.
- * OCR the page, locate MRZ lines, parse, and extract the passport number.
+ * Passport extractor (documentType 'passport') — DESIGN.md §5, §9.
+ *
+ * Strategy: OCR the page, find MRZ-shaped tokens, and parse TD3 **line 2**
+ * tolerantly (`parseTd3Line2`) — line 2 holds the passport number + its check
+ * digit (and the national ID in the personal-number field), and OCR reads it
+ * reliably even when the name line is garbled. We pick the candidate whose
+ * passport-number check digit validates.
  */
 import type { AuthenticitySignal, Reason } from '../types.js';
 import type { NormalizedImage } from '../image/image-input.js';
@@ -9,8 +14,8 @@ import type {
   ExtractContext,
   ExtractionOutput,
 } from './extractor.js';
-import { findMrzLines, candidateMrzGroups } from '../mrz/mrz-locate.js';
-import { parseMrz, type MrzParseResult } from '../mrz/mrz-parse.js';
+import { findMrzCandidates } from '../mrz/mrz-locate.js';
+import { parseTd3Line2, type Td3Line2Fields } from '../mrz/mrz-parse.js';
 import { reason } from '../utils/errors.js';
 
 export class PassportMrzExtractor implements Extractor {
@@ -20,46 +25,37 @@ export class PassportMrzExtractor implements Extractor {
     image: NormalizedImage,
     ctx: ExtractContext,
   ): Promise<ExtractionOutput> {
-    const ocr = await ctx.ocr.recognize(image, { languages: ['eng'] });
+    const ocr = await ctx.ocr.recognize(image);
+    const candidates = findMrzCandidates(ocr.text);
 
-    const candidates = findMrzLines(ocr.text);
-    const groups = candidateMrzGroups(candidates);
-
-    if (groups.length === 0) {
+    if (candidates.length === 0) {
       return fail([reason('MRZ_NOT_FOUND')]);
     }
 
-    // Try each grouping; prefer one whose check digits validate.
-    let best: MrzParseResult | null = null;
-    for (const group of groups) {
-      const parsed = parseMrz(group);
-      if (parsed.checkDigitsValid && parsed.documentNumber) {
-        best = parsed;
-        break;
-      }
-      if (!best && parsed.documentNumber) best = parsed;
-    }
+    const parsed = candidates.map((line) => ({ line, fields: parseTd3Line2(line) }));
+    // Prefer a candidate whose passport-number check digit validates.
+    const valid = parsed.find((p) => p.fields.documentNumberValid);
+    const chosen =
+      valid ??
+      // else the longest candidate, so we can report a mismatch rather than nothing.
+      parsed.slice().sort((a, b) => b.line.length - a.line.length)[0]!;
 
-    if (!best || !best.documentNumber) {
+    const fields: Td3Line2Fields = chosen.fields;
+    if (!fields.documentNumber) {
       return fail([reason('MRZ_NOT_FOUND')]);
     }
 
     const signals: AuthenticitySignal[] = [
-      { kind: 'mrz_present', passed: true, weight: 0.4, detail: best.format ?? undefined },
-      {
-        kind: 'mrz_checksums_valid',
-        passed: best.checkDigitsValid,
-        weight: 0.6,
-      },
+      { kind: 'mrz_present', passed: true, weight: 0.4 },
+      { kind: 'mrz_checksums_valid', passed: fields.documentNumberValid, weight: 0.6 },
     ];
-
-    const reasons: Reason[] = best.checkDigitsValid
+    const reasons: Reason[] = fields.documentNumberValid
       ? []
       : [reason('MRZ_CHECKSUM_FAILED')];
 
     return {
-      candidates: [best.documentNumber],
-      confidence: best.checkDigitsValid ? 0.95 : 0.3,
+      candidates: [fields.documentNumber],
+      confidence: fields.documentNumberValid ? 0.95 : 0.3,
       signals,
       reasons,
     };

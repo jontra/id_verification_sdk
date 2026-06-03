@@ -28,6 +28,21 @@ export function findMrzLines(ocrText: string): string[] {
 }
 
 /**
+ * Return MRZ-looking tokens, splitting on any whitespace — not just newlines.
+ * PaddleOCR often returns the whole MRZ region as one space-separated block
+ * (`<line2> <line1> …`), so the individual 44-char MRZ lines are whitespace-
+ * separated tokens rather than newline-separated lines.
+ */
+export function findMrzCandidates(ocrText: string): string[] {
+  const tokens = ocrText
+    .toUpperCase()
+    .split(/\s+/)
+    .map((t) => t.replace(MRZ_CHARS, ''))
+    .filter(looksLikeMrz);
+  return [...new Set(tokens)];
+}
+
+/**
  * From candidate MRZ lines, produce the line-groups worth trying to parse,
  * most-likely first. MRZ is 2 lines (TD2/TD3) or 3 lines (TD1), at the bottom.
  */
