@@ -25,10 +25,23 @@ export function detectIdKeywords(text: string): boolean {
   return ID_KEYWORDS.test(text);
 }
 
-/** Extract candidate ID number strings (contiguous 5–10 digit runs). */
+/**
+ * Extract candidate ID number strings. Returns two interpretations, unioned:
+ *  - contiguous digit runs (`\d{5,10}`) — licence numbers, already-joined IDs.
+ *  - space-grouped runs collapsed to digits, kept only when exactly 9 digits
+ *    (the Israeli ID length): `0 3452197 1` → `034521971`.
+ *
+ * The exact-9 filter is what prevents over-merging — two unrelated numbers
+ * separated by a single space (e.g. `01011990 123456782`) strip to ≠ 9 digits
+ * and are discarded. Emitting both interpretations is safe: the flow's
+ * claim-aware selection picks the one matching the claim; noise is ignored.
+ */
 export function extractIdCandidates(text: string): string[] {
-  const matches = text.match(/\d{5,10}/g) ?? [];
-  return [...new Set(matches)];
+  const contiguous = text.match(/\d{5,10}/g) ?? [];
+  const grouped = (text.match(/\d[\d ]*\d/g) ?? [])
+    .map((s) => s.replace(/ /g, ''))
+    .filter((s) => s.length === 9);
+  return [...new Set([...contiguous, ...grouped])];
 }
 
 export class IsraeliIdExtractor implements Extractor {

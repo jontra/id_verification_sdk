@@ -50,12 +50,17 @@ describe('fuzzyMatch', () => {
     });
   });
 
-  it('different lengths → strong mismatch', () => {
-    expect(fuzzyMatch(claim, '12345678')).toEqual({
-      matched: false,
-      mode: 'none',
-      difference: 9,
+  it('a dropped digit (length differs by 1) → fuzzy match via edit distance', () => {
+    // 224412264 vs 22441264 = one deletion → distance 1
+    expect(fuzzyMatch('224412264', '22441264')).toMatchObject({
+      matched: true,
+      mode: 'fuzzy',
+      difference: 1,
     });
+  });
+
+  it('a wholly different number → no match', () => {
+    expect(fuzzyMatch(claim, '987654321')).toMatchObject({ matched: false, mode: 'none' });
   });
 
   it('respects a custom tolerance', () => {

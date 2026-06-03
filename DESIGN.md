@@ -249,12 +249,11 @@ These signals are added to the `AuthenticitySignal.kind` union only if/when the 
 
 ## 7. Fuzzy match rule (to justify in README)
 
-1. **Normalize** both claimed and extracted to digits only; for Israeli ID, left-pad to canonical length 9.
-2. **Length differs after normalization** → strong mismatch; `digitDifference = max(lenA, lenB)` (capped), `mode: 'none'`.
-3. **Same length** → **position-aware (Hamming) difference**: count positions where digits differ.
-4. `digitDifference === 0` → `exact`. `1..tolerance(=2)` → `fuzzy`. `> tolerance` → `none` (mismatch).
+1. **Normalize** both claimed and extracted: digits-only and left-pad to 9 for Israeli ID; uppercase alphanumeric for passport numbers.
+2. Compute **Levenshtein edit distance** between the two normalized strings.
+3. `distance === 0` → `exact`; `1..tolerance(=2)` → `fuzzy`; `> tolerance` → `none` (mismatch). (`NumberMatch.digitDifference` carries the edit distance.)
 
-**Why position-aware, not Levenshtein:** OCR digit errors are overwhelmingly *substitutions in place* (8↔0, 1↔7), not insertions/deletions. Levenshtein would let a shifted sequence match too cheaply and create false accepts; position-aware Hamming on equal-length, zero-padded numbers reflects the real error model and is stricter. (Open question: do we want a small Levenshtein allowance for a single missing/extra digit? — discuss.)
+**Why Levenshtein, not position-aware Hamming (changed after testing real OCR):** real OCR errors include **inserted and dropped characters**, not only in-place substitutions — e.g. PaddleOCR read the passport number `224412264` as `22441264` (one deletion). Hamming treats any length change as a hard mismatch, so it would wrongly reject that. Edit distance handles insert/delete/substitute uniformly. Tolerance 2 keeps it strict: ≤2 edits on a ~9-character number is a small allowance, so false accepts stay unlikely.
 
 ## 8. Authenticity certificate — structured assertion only
 
@@ -262,20 +261,27 @@ The certificate is a **structured assertion** (the `AuthenticityCertificate` obj
 
 Rationale: client-side signing can't be a trust anchor — the key would ship in the bundle, so anyone could forge it. A signature would only prove integrity *within* the app, not real attestation. Not worth the complexity for this assignment. (Signing — embedded-key HMAC or a consumer-injected signer — is a documented future option if a backend trust anchor is ever added.)
 
-## 9. Library choices (justify in README)
+## 9. OCR engines & library choices (justify in README)
 
-| Concern | Choice | License | Note |
+**Two OCR engines, chosen per document type** — validated against real phone photos (see "Findings" below):
+
+| Path | Engine | License | Why |
 | :-- | :-- | :-- | :-- |
-| OCR | **Tesseract.js** (WASM) | Apache-2.0 | `heb`+`eng` traineddata, self-hosted (privacy) |
-| MRZ parse | **`mrz`** (npm) | MIT | pure parser; we feed OCR'd band text |
-| MRZ band OCR | Tesseract `eng` / OCR-B | — | reuse OCR engine on located band |
-| Build | tsup / Vite lib mode | — | ESM + types |
-| Demo | Vite + React | — | minimal upload→result page |
+| `id` / licence | **PaddleOCR (PP-OCR)** via **ONNX Runtime Web** | Apache-2.0 | learned text *detector* (DBNet) localizes the number on cluttered/guilloché/rotated cards where Tesseract's classical segmentation fails |
+| `passport` | **Tesseract.js** (MRZ charset) + **`mrz`** parser | Apache-2.0 / MIT | MRZ is OCR-B; a charset-restricted Tesseract reads `<` fillers accurately, which the general PP-OCR recognizer does not |
+| both | **orientation-retry** (0/90/180/270) | — | neither engine handles all rotations alone; keep the orientation whose result validates |
+| Build / Demo | tsup / Vite + React | — | ESM + types; minimal demo |
 
-**OCR configuration (learned from real photos):**
-- **Page segmentation = `PSM.AUTO`.** Tesseract.js defaults to `SINGLE_BLOCK`, which assumes one uniform block of text and fails on multi-field ID/licence layouts — especially angled real-world photos (it returned zero digits on a real licence). `AUTO` segments the page into regions and reliably finds the document number.
-- **No pre-binarization.** We feed Tesseract the decoded image and rely on its internal adaptive binarization. A global Otsu threshold (an earlier idea) hurts on uneven lighting / busy backgrounds; Tesseract's adaptive method is better. (This is why there is no `preprocess.ts`.)
-- **Known limit:** heavily rotated / cropped-out / low-contrast captures still read poorly. Robustness there needs document detection + deskew/crop — overlaps with the Section 14 stretch detector and is out of baseline scope.
+### Findings (why this architecture — learned the hard way)
+
+- **Tesseract alone fails on real card photos.** The failure is *text detection*, not recognition: on a tight hand-crop Tesseract reads the number fine, but it cannot *locate* a faint number on a guilloché background (its layout analysis reads the security hatching as text). `PSM.AUTO` + no-binarization helped but did not solve angled/holographic captures.
+- **PaddleOCR solves the `id` path.** Its DBNet detector localizes text on cluttered backgrounds and outputs rotated boxes; it read `034521971` from the casual front photo that defeated Tesseract, and from the licence. Apache-2.0 (no AGPL friction).
+- **PaddleOCR is *not* reliable for MRZ.** Its general recognizer confuses `<`↔`K` and the strict `mrz` parser (exact 44 chars + check digits) rejects the result. So passports keep a Tesseract MRZ pass.
+- **The back-of-card 2D barcode does NOT contain the ID** — it decodes (via `zxing-wasm`) to a security code (`16-10-24-12`), not the Israeli ID. Dead end for machine-readable ID extraction.
+- **MRZ parse must be tolerant.** Even high-contrast MRZ gets ±1 char OCR errors per pass that break exact-44-char parsing. Strategy: try the `mrz` lib; on failure fall back to **position-based line-2 field extraction** validating the passport-number and personal-number check digits independently; accept the orientation/crop where the passport-number check digit validates. (Line 2 carries the passport number, its check digit, and the Israeli ID in the personal-number field.)
+
+### Privacy note
+PP-OCR ONNX models + ORT-Web WASM and Tesseract assets are **self-hosted** (same origin), loaded once at `warmup()`. No third-party CDN at runtime; no per-image network. (Node validation used `@gutenye/ocr-node`; the browser uses `onnxruntime-web` with the same PP-OCR models.)
 
 **Baseline (v1) ships without an on-device detector** — authenticity is the heuristic in Section 6. The detector is a **stretch goal (Section 14)**, implemented last if time permits, and added via these libs:
 

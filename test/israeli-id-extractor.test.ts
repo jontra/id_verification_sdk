@@ -35,4 +35,9 @@ describe('extractIdCandidates', () => {
       '034521971',
     ]);
   });
+
+  it('joins an ID number printed with internal spaces', () => {
+    // Biometric ID card prints the number as "0 3452197 1".
+    expect(extractIdCandidates('0 3452197 1')).toContain('034521971');
+  });
 });

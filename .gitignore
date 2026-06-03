@@ -7,3 +7,6 @@ dist-demo
 .idea
 *.iml
 *.traineddata
+
+# Real identity documents — never commit (privacy). Keep only specimen images.
+test/IMG_*.jpg
