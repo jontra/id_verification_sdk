@@ -45,17 +45,23 @@ export class PassportMrzExtractor implements Extractor {
       return fail([reason('MRZ_NOT_FOUND')]);
     }
 
+    // MRZ line 2 carries both the passport number and (for Israeli passports)
+    // the national ID in the personal-number field. Return both as candidates
+    // so the flow matches whichever the user claimed.
+    const candidateNumbers = [...new Set([fields.documentNumber, fields.personalNumber])].filter(
+      (n) => n.length > 0,
+    );
+    const checksumsValid = fields.documentNumberValid || fields.personalNumberValid;
+
     const signals: AuthenticitySignal[] = [
       { kind: 'mrz_present', passed: true, weight: 0.4 },
-      { kind: 'mrz_checksums_valid', passed: fields.documentNumberValid, weight: 0.6 },
+      { kind: 'mrz_checksums_valid', passed: checksumsValid, weight: 0.6 },
     ];
-    const reasons: Reason[] = fields.documentNumberValid
-      ? []
-      : [reason('MRZ_CHECKSUM_FAILED')];
+    const reasons: Reason[] = checksumsValid ? [] : [reason('MRZ_CHECKSUM_FAILED')];
 
     return {
-      candidates: [fields.documentNumber],
-      confidence: fields.documentNumberValid ? 0.95 : 0.3,
+      candidates: candidateNumbers,
+      confidence: checksumsValid ? 0.95 : 0.3,
       signals,
       reasons,
     };

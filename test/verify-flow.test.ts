@@ -90,6 +90,18 @@ describe('verify() — passport path', () => {
     expect(r.decision).toBe('error');
     expect(r.reasons.some((x) => x.code === 'MRZ_NOT_FOUND')).toBe(true);
   });
+
+  it('matches either the passport number or the national ID from MRZ line 2', async () => {
+    // Real Israeli passport line 2: passport 22441264, national ID 034521971.
+    const line2 = '22441264<1ISR7712234M25082230<3452197<1<<<26';
+    const byPassport = await run(line2, 'passport', '22441264');
+    expect(byPassport.decision).toBe('verified');
+    expect(byPassport.numberMatch.extractedNumber).toBe('22441264');
+
+    const byNationalId = await run(line2, 'passport', '034521971');
+    expect(byNationalId.decision).toBe('verified');
+    expect(byNationalId.numberMatch.extractedNumber).toBe('034521971');
+  });
 });
 
 describe('verify() — failures', () => {
