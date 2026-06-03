@@ -2,21 +2,20 @@
 /**
  * Real-OCR integration test (fills the gap left by the stubbed-OCR unit tests).
  *
- * Runs actual Tesseract.js on a specimen Israeli driving licence image and feeds
- * the output through the real IsraeliIdExtractor. This exercises the genuine
- * OCR → extraction path that stubs cannot.
+ * Runs actual PaddleOCR (PP-OCR via `@gutenye/ocr-node`) on a specimen Israeli
+ * driving licence and feeds the output through the real IsraeliIdExtractor —
+ * exercising the genuine OCR → extraction path with the engine we ship for the
+ * `id` path. (Browser uses the same PP-OCR models via `@gutenye/ocr-browser`;
+ * the canvas/decode plumbing is verified via the demo in a real browser.)
  *
- * Notes:
- *  - Runs in the Node environment (Tesseract accepts a Buffer directly), so the
- *    canvas/decode plumbing is not covered here — that is verified via the demo
- *    in a real browser.
- *  - First run downloads eng+heb traineddata (needs network); hence the long
- *    timeout. The specimen's printed numbers are deliberately NOT valid Israeli
- *    IDs, so the extractor correctly reports check_digit_valid = false.
+ * The specimen's printed numbers are deliberately NOT valid Israeli IDs, so the
+ * extractor correctly reports check_digit_valid = false.
+ *
+ * Note: only the specimen image is committed; real ID/passport photos are
+ * git-ignored for privacy, so this test runs against the specimen.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createWorker, type Worker } from 'tesseract.js';
-import { readFileSync } from 'node:fs';
+import { describe, it, expect, beforeAll } from 'vitest';
+import Ocr from '@gutenye/ocr-node';
 import { IsraeliIdExtractor } from '../src/extractors/israeli-id.extractor.js';
 import type {
   ExtractContext,
@@ -25,35 +24,29 @@ import type {
 } from '../src/extractors/extractor.js';
 import type { NormalizedImage } from '../src/image/image-input.js';
 
-const IMAGE_URL = new URL('./driving_licence.jpg', import.meta.url);
+const IMAGE_PATH = new URL('./driving_licence.jpg', import.meta.url).pathname;
 const OCR_TIMEOUT_MS = 120_000;
 
-let worker: Worker;
 let ocr: OcrResult;
 let output: ExtractionOutput;
 
 beforeAll(async () => {
-  worker = await createWorker(['eng', 'heb']);
-  const buf = readFileSync(IMAGE_URL);
-  const { data } = await worker.recognize(buf);
+  const engine = await Ocr.create();
+  const lines = (await engine.detect(IMAGE_PATH)) as Array<{ text: string; mean?: number }>;
   ocr = {
-    text: data.text,
-    confidence: data.confidence / 100,
-    words: (data.words ?? []).map((w) => ({ text: w.text, confidence: w.confidence / 100 })),
+    text: lines.map((l) => l.text).join('\n'),
+    confidence: 0.9,
+    words: lines.map((l) => ({ text: l.text, confidence: l.mean ?? 0.9 })),
   };
 
-  // Feed the real OCR result through the actual extractor.
+  // Feed the real PaddleOCR result through the actual extractor.
   const stubRunner = { recognize: async (): Promise<OcrResult> => ocr };
   const image: NormalizedImage = { pixels: {} as ImageData, width: 856, height: 540 };
   const ctx: ExtractContext = { minOcrConfidence: 0.5, ocr: stubRunner };
   output = await new IsraeliIdExtractor().extract(image, ctx);
 }, OCR_TIMEOUT_MS);
 
-afterAll(async () => {
-  await worker?.terminate();
-});
-
-describe('real OCR — specimen Israeli driving licence', () => {
+describe('real OCR (PaddleOCR) — specimen Israeli driving licence', () => {
   it('OCRs Israeli document text', () => {
     expect(ocr.text).toMatch(/ISRAEL/i);
   });

@@ -26,6 +26,8 @@
     "demo": "vite --config demo/vite.config.ts"
   },
   "dependencies": {
+    "@gutenye/ocr-browser": "^1.4.8",
+    "@gutenye/ocr-models": "^1.4.2",
     "mrz": "^4.1.0",
     "tesseract.js": "^5.1.0"
   },

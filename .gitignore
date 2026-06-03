@@ -10,3 +10,7 @@ dist-demo
 
 # Real identity documents — never commit (privacy). Keep only specimen images.
 test/IMG_*.jpg
+
+# Self-hosted PP-OCR models (copied from @gutenye/ocr-models; ~16MB)
+demo/public/assets/
+demo/public/ort/

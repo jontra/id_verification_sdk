@@ -1,6 +1,32 @@
 import { useRef, useState } from 'react';
 import { createIdVerifier } from '../src/index.js';
 import type { DocumentType, IdVerifier, VerificationResult } from '../src/index.js';
+import { PaddleOcrEngine, type PaddleDetector } from '../src/ocr/paddle-ocr-engine.js';
+
+// DEV demo: load the ORT wasm from the official CDN (matches the installed
+// version). This is a runtime fetch, not image data — the no-upload guarantee
+// is about the document image. A production deployment should self-host these
+// (see DESIGN §9 / §10); doing so cleanly under Vite needs an asset-copy step.
+const ORT_WASM_CDN = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/';
+
+/** PP-OCR engine backed by @gutenye/ocr-browser, models self-hosted under /assets. */
+function createPaddleEngine(): PaddleOcrEngine {
+  return new PaddleOcrEngine(async () => {
+    // Point onnxruntime-web at the self-hosted wasm (same module instance gutenye uses).
+    const ort = await import('onnxruntime-web');
+    ort.env.wasm.wasmPaths = ORT_WASM_CDN;
+    ort.env.wasm.numThreads = 1; // avoid SharedArrayBuffer/COOP-COEP requirement in dev
+    const Ocr = (await import('@gutenye/ocr-browser')).default;
+    const ocr = await Ocr.create({
+      models: {
+        detectionPath: '/assets/ch_PP-OCRv4_det_infer.onnx',
+        recognitionPath: '/assets/ch_PP-OCRv4_rec_infer.onnx',
+        dictionaryPath: '/assets/ppocr_keys_v1.txt',
+      },
+    });
+    return ocr as unknown as PaddleDetector;
+  });
+}
 
 const DECISION_COLORS: Record<VerificationResult['decision'], string> = {
   verified: '#1a7f37',
@@ -24,7 +50,10 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
 
   function getVerifier(): IdVerifier {
-    if (!verifierRef.current) verifierRef.current = createIdVerifier();
+    if (!verifierRef.current) {
+      // Inject PaddleOCR (PP-OCR) — the engine that reads real card photos.
+      verifierRef.current = createIdVerifier({}, { ocr: createPaddleEngine() });
+    }
     return verifierRef.current;
   }
 
