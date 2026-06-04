@@ -6,6 +6,19 @@ Supports three variants: **Israeli ID card**, **Israeli driver's license** (both
 
 > Architecture, design decisions, and trade-offs live in **[DESIGN.md](./DESIGN.md)**. This README is the consumer-facing summary.
 
+## How extraction works (overview)
+
+A single `verify()` call runs this pipeline, entirely in the browser:
+
+1. **Decode** the photo (`Blob`/`File`/`ImageData`) to pixels, applying EXIF orientation.
+2. **Read text with on-device OCR.** For an ID card / driver's license, **PaddleOCR (PP-OCR)** — a learned text *detector* + recognizer running on ONNX Runtime Web — locates and reads the text even on cluttered, guilloché, angled real-world photos (where classical OCR fails to *find* the number). For a passport, the same engine reads the **MRZ**.
+3. **Collect candidate numbers** from the OCR text — all digit runs for an ID (a card shows several numbers); for a passport, the passport number and national ID parsed by position from MRZ line 2.
+4. **Pick by the claim.** The flow selects the candidate with the smallest edit distance to the user's claimed number (claim-aware selection) and fuzzy-matches it (Levenshtein ≤ 2).
+5. **Validate authenticity** from check digits / MRZ checksums plus document keywords — a weighted heuristic.
+6. **Shape the result** into a discriminated `decision`: `verified` / `mismatch` / `not_authentic` / `error`, with confidence and reasons.
+
+Details and the rationale for each choice are in the sections below and in [DESIGN.md](./DESIGN.md).
+
 ## Features
 
 - 🔒 **Image never leaves the device** — OCR, parsing, and validation run locally in JS/WASM. No upload, no cloud OCR.
