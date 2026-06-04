@@ -34,24 +34,29 @@ So `documentType: 'passport'` → MRZ path. `documentType: 'id'` → OCR path (c
 
 The **Israeli check digit** is the linchpin: it both validates the extracted number *and* is our strongest cheap authenticity signal for the OCR path. A 9-digit run that OCRs *and* passes the checksum is very unlikely to be noise.
 
+> **Engine note (validated against real photos, Section 9):** the "OCR" above is **PaddleOCR (PP-OCR)** — a learned detector+recognizer that actually reads casual card photos, where classical Tesseract failed to *locate* the number. The passport MRZ is read by PaddleOCR and parsed **tolerantly** (TD3 line 2). The two-regime insight still holds; only the engine choice evolved.
+
 ## 3. Public API
 
-Factory pattern, because OCR (WASM + language data) and the MRZ parser must load **once** and be reused.
+Factory pattern, because OCR (ONNX/WASM models) loads **once** and is reused. `createIdVerifier` is **synchronous**; heavy assets load lazily on first `verify()` or eagerly via `warmup()`.
 
 ```ts
-import { createIdVerifier } from '@org/id-verification-sdk';
+import { createIdVerifier, PaddleOcrEngine } from 'id-verification-sdk';
 
-const verifier = await createIdVerifier({
+const verifier = createIdVerifier({
   // all optional, sensible defaults
-  ocr?: { languages?: string[]; modelBaseUrl?: string };   // self-hosted traineddata
+  ocrEngine?: OcrEngine;            // inject PaddleOcrEngine (recommended); else built-in Tesseract
+  ocr?: { languages?: string[]; modelBaseUrl?: string };   // Tesseract fallback config
   minOcrConfidence?: number;        // default 0.5
-  fuzzyTolerance?: number;          // default 2 (max differing digits)
+  fuzzyTolerance?: number;          // default 2 (max edit distance)
 });
 
+await verifier.warmup();            // optional: preload models
 const result = await verifier.verify(input, { signal?: AbortSignal });
-
-verifier.dispose();   // free WASM workers
+await verifier.dispose();
 ```
+
+The SDK is **engine-agnostic** via the `OcrRunner` interface (Section 9). `PaddleOcrEngine` (PP-OCR) is the recommended engine and reads real photos; a built-in Tesseract engine is the fallback. The consumer wires the engine + self-hosted model paths (see `demo/App.tsx`).
 
 ### Input
 
@@ -159,12 +164,13 @@ src/
     israeli-id.extractor.ts    // documentType 'id' (ID card + driver's license)
 
   ocr/
-    ocr-engine.ts              // Tesseract.js wrapper: init/warmup, recognize, dispose
-    preprocess.ts              // grayscale, threshold, resize, (light) deskew
+    paddle-ocr-engine.ts       // PRIMARY: PP-OCR via injected detector (browser:
+                               //   @gutenye/ocr-browser); OcrRunner; line-join helper
+    ocr-engine.ts              // FALLBACK: Tesseract.js wrapper (PSM.AUTO, no pre-binarize)
 
   mrz/
-    mrz-locate.ts              // find the MRZ band region
-    mrz-parse.ts               // wrap `mrz` lib → {country, number, checks}
+    mrz-locate.ts              // findMrzCandidates: MRZ-shaped tokens from OCR text
+    mrz-parse.ts               // `mrz` lib wrapper + mrzCheckDigit + parseTd3Line2 (tolerant)
 
   validation/
     israeli-id.ts              // 9-digit check-digit algorithm (+ normalize/pad)
@@ -200,12 +206,14 @@ interface Extractor {
 }
 
 interface ExtractionOutput {
-  number: string | null;
+  candidates: string[];           // ALL number strings found — extractor does not pick or compare
   confidence: number;             // extraction confidence
-  signals: AuthenticitySignal[];  // extractor contributes authenticity evidence
+  signals: AuthenticitySignal[];  // claim-independent authenticity evidence
   reasons: Reason[];
 }
 ```
+
+**Separation of concerns (important):** the extractor only *finds* number strings; it does not decide which is "the" number, validate it against the claim, or pick by check digit. A document often shows several numbers (e.g. an Israeli licence prints both the ID and the licence number). The **flow** does claim-aware selection — it picks the candidate with the smallest fuzzy distance to the claimed number — so the right one is chosen without the extractor knowing anything about the claim. Validity (check digit / MRZ checksum) is reported only as a claim-independent **authenticity signal**, not used to pick the number.
 
 ## 5. Pipeline flow
 
@@ -213,11 +221,12 @@ interface ExtractionOutput {
 verify(input)
   1. normalize image           image/image-input.ts   → NormalizedImage (or IMAGE_DECODE_FAILED)
   2. select extractor          extractors/registry    → by documentType
-  3. extract                   extractor.extract()    → {number, confidence, signals, reasons}
-       passport → MRZ locate → OCR band (OCR-B) → mrz-parse
-       id       → preprocess → OCR full → find 9-digit runs → check-digit filter
+  3. extract                   extractor.extract()    → {candidates[], confidence, signals, reasons}
+       id       → PaddleOCR reads text → all digit runs as candidates (+ space-joined 9-digit)
+       passport → PaddleOCR reads MRZ → findMrzCandidates → parseTd3Line2 (tolerant)
+                  → [passport number, national ID]
   4. authenticity              authenticity.ts        → certificate (weighted signals)
-  5. number match              fuzzy-match.ts         → {matched, mode, digitDifference}
+  5. select + number match     fuzzy-match.ts         → candidate closest to claim → {matched, mode, digitDifference}
   6. derive decision + shape   verify()               → VerificationResult
 ```
 
@@ -247,12 +256,11 @@ These signals are added to the `AuthenticitySignal.kind` union only if/when the 
 
 ## 7. Fuzzy match rule (to justify in README)
 
-1. **Normalize** both claimed and extracted to digits only; for Israeli ID, left-pad to canonical length 9.
-2. **Length differs after normalization** → strong mismatch; `digitDifference = max(lenA, lenB)` (capped), `mode: 'none'`.
-3. **Same length** → **position-aware (Hamming) difference**: count positions where digits differ.
-4. `digitDifference === 0` → `exact`. `1..tolerance(=2)` → `fuzzy`. `> tolerance` → `none` (mismatch).
+1. **Normalize** both claimed and extracted: digits-only and left-pad to 9 for Israeli ID; uppercase alphanumeric for passport numbers.
+2. Compute **Levenshtein edit distance** between the two normalized strings.
+3. `distance === 0` → `exact`; `1..tolerance(=2)` → `fuzzy`; `> tolerance` → `none` (mismatch). (`NumberMatch.digitDifference` carries the edit distance.)
 
-**Why position-aware, not Levenshtein:** OCR digit errors are overwhelmingly *substitutions in place* (8↔0, 1↔7), not insertions/deletions. Levenshtein would let a shifted sequence match too cheaply and create false accepts; position-aware Hamming on equal-length, zero-padded numbers reflects the real error model and is stricter. (Open question: do we want a small Levenshtein allowance for a single missing/extra digit? — discuss.)
+**Why Levenshtein, not position-aware Hamming (changed after testing real OCR):** real OCR errors include **inserted and dropped characters**, not only in-place substitutions — e.g. PaddleOCR read the passport number `224412264` as `22441264` (one deletion). Hamming treats any length change as a hard mismatch, so it would wrongly reject that. Edit distance handles insert/delete/substitute uniformly. Tolerance 2 keeps it strict: ≤2 edits on a ~9-character number is a small allowance, so false accepts stay unlikely.
 
 ## 8. Authenticity certificate — structured assertion only
 
@@ -260,15 +268,27 @@ The certificate is a **structured assertion** (the `AuthenticityCertificate` obj
 
 Rationale: client-side signing can't be a trust anchor — the key would ship in the bundle, so anyone could forge it. A signature would only prove integrity *within* the app, not real attestation. Not worth the complexity for this assignment. (Signing — embedded-key HMAC or a consumer-injected signer — is a documented future option if a backend trust anchor is ever added.)
 
-## 9. Library choices (justify in README)
+## 9. OCR engines & library choices (justify in README)
 
-| Concern | Choice | License | Note |
+**Two OCR engines, chosen per document type** — validated against real phone photos (see "Findings" below):
+
+| Path | Engine | License | Why |
 | :-- | :-- | :-- | :-- |
-| OCR | **Tesseract.js** (WASM) | Apache-2.0 | `heb`+`eng` traineddata, self-hosted (privacy) |
-| MRZ parse | **`mrz`** (npm) | MIT | pure parser; we feed OCR'd band text |
-| MRZ band OCR | Tesseract `eng` / OCR-B | — | reuse OCR engine on located band |
-| Build | tsup / Vite lib mode | — | ESM + types |
-| Demo | Vite + React | — | minimal upload→result page |
+| `id` / licence | **PaddleOCR (PP-OCR)** via **ONNX Runtime Web** | Apache-2.0 | learned text *detector* (DBNet) localizes the number on cluttered/guilloché/rotated cards where Tesseract's classical segmentation fails |
+| `passport` | **Tesseract.js** (MRZ charset) + **`mrz`** parser | Apache-2.0 / MIT | MRZ is OCR-B; a charset-restricted Tesseract reads `<` fillers accurately, which the general PP-OCR recognizer does not |
+| both | **orientation-retry** (0/90/180/270) | — | neither engine handles all rotations alone; keep the orientation whose result validates |
+| Build / Demo | tsup / Vite + React | — | ESM + types; minimal demo |
+
+### Findings (why this architecture — learned the hard way)
+
+- **Tesseract alone fails on real card photos.** The failure is *text detection*, not recognition: on a tight hand-crop Tesseract reads the number fine, but it cannot *locate* a faint number on a guilloché background (its layout analysis reads the security hatching as text). `PSM.AUTO` + no-binarization helped but did not solve angled/holographic captures.
+- **PaddleOCR solves the `id` path.** Its DBNet detector localizes text on cluttered backgrounds and outputs rotated boxes; it read `034521971` from the casual front photo that defeated Tesseract, and from the licence. Apache-2.0 (no AGPL friction).
+- **PaddleOCR is *not* reliable for MRZ.** Its general recognizer confuses `<`↔`K` and the strict `mrz` parser (exact 44 chars + check digits) rejects the result. So passports keep a Tesseract MRZ pass.
+- **The back-of-card 2D barcode does NOT contain the ID** — it decodes (via `zxing-wasm`) to a security code (`16-10-24-12`), not the Israeli ID. Dead end for machine-readable ID extraction.
+- **MRZ parse must be tolerant.** Even high-contrast MRZ gets ±1 char OCR errors per pass that break exact-44-char parsing. Strategy: try the `mrz` lib; on failure fall back to **position-based line-2 field extraction** validating the passport-number and personal-number check digits independently; accept the orientation/crop where the passport-number check digit validates. (Line 2 carries the passport number, its check digit, and the Israeli ID in the personal-number field.)
+
+### Privacy note
+PP-OCR ONNX models + ORT-Web WASM and Tesseract assets are **self-hosted** (same origin), loaded once at `warmup()`. No third-party CDN at runtime; no per-image network. (Node validation used `@gutenye/ocr-node`; the browser uses `onnxruntime-web` with the same PP-OCR models.)
 
 **Baseline (v1) ships without an on-device detector** — authenticity is the heuristic in Section 6. The detector is a **stretch goal (Section 14)**, implemented last if time permits, and added via these libs:
 
@@ -281,9 +301,9 @@ Trade-offs to document: **AGPL** (fine for the assignment; commercial use needs 
 
 ## 10. Privacy enforcement (must be demonstrable)
 
-- **Zero network in `verify()`.** All deps bundled or loaded at `createIdVerifier()` from same origin; no `fetch`/`XHR`/`sendBeacon` during verification.
-- Traineddata/WASM **self-hosted**, never a third-party CDN at runtime.
-- **Test**: spy on `fetch`/`XMLHttpRequest`/`navigator.sendBeacon` and assert zero calls across a full `verify()`. README points to this test as the proof.
+- **The document image never leaves the device.** All recognition runs locally on the pixels (PP-OCR / Tesseract / MRZ parse). No image bytes are sent anywhere.
+- **Zero network in `verify()`.** Models load at `warmup()` / first call, not during the verification itself. **Test** (`test/privacy.test.ts`): spy on `fetch`/`XMLHttpRequest`/`navigator.sendBeacon` and assert zero calls across a full `verify()`.
+- **Self-hosting of model/runtime assets** is supported and is the intended production posture: the demo serves PP-OCR models from `/assets` (same-origin). ⚠️ **Known gap:** the demo currently loads the onnxruntime-web *wasm* from a CDN for dev convenience (a runtime-code fetch, not image data). Production should self-host it via a Vite asset-copy step. This is a deployment detail, not a leak of document data.
 
 ## 11. Cross-browser notes
 
@@ -296,7 +316,7 @@ Trade-offs to document: **AGPL** (fine for the assignment; commercial use needs 
 
 ```ts
 interface NormalizedImage {
-  pixels: ImageData;                              // RGBA — accepted by Tesseract, canvas, ONNX preprocessing
+  pixels: ImageData;                              // RGBA — drawn to a canvas/data-URL for the OCR engine
   width: number;
   height: number;
   canvas?: HTMLCanvasElement | OffscreenCanvas;   // reused downstream so we don't redraw
@@ -314,20 +334,43 @@ Rationale — DIY is cheap *because the target is narrow* (desktop Chrome + Safa
 
 When to switch to **`blueimp-load-image`** instead: if the Safari fallback path gets fiddly, or we'd rather spend the time box on verification logic than canvas-orientation quirks. It does `File/Blob` → canvas + EXIF orientation + resize in one. Alternatives if only one concern arises: **`exifr`** (orientation only), **`pica`** (high-quality downscale). Either DIY or blueimp is a defensible, low-risk choice for this scope.
 
-## 12. Open questions (to resolve while iterating)
+### Supported formats & HEIC (future work)
 
-1. Fuzzy match — allow a single insert/delete (Levenshtein-1) or strict Hamming only?
-2. Authenticity threshold + per-signal weights — set now or tune against sample images?
-3. Should `id` extractor try to *classify* ID-card vs driver's-license (for better keyword signals), or stay agnostic?
-4. Do we expose intermediate artifacts (OCR text, located MRZ) in the result for debugging, behind a `debug` flag?
+**Supported: JPEG, PNG, WebP** — formats both target browsers decode natively via `createImageBitmap`/canvas. **HEIC** (default iPhone format) is intentionally **out of scope**: Chrome has no HEIC codec, so decode throws and we surface `IMAGE_DECODE_FAILED`. (Safari can decode HEIC natively, so behavior would otherwise be inconsistent across the two target browsers.) The demo's file picker is restricted to the supported types and rejects others with an explicit message; the SDK fails fast — never a silent pass.
 
-## 13. Test plan (deliverable)
+**To add HEIC support later** (all client-side, preserves the no-upload guarantee):
+1. Add a WASM HEIC decoder — **`heic2any`** (wraps **libheif**). Note **libheif is LGPL** (cf. the AGPL note for the YOLO detector in Section 9) — fine to use, but flag it if statically bundling into a closed product.
+2. In `image/image-input.ts`, before the existing decode, detect HEIC (`type` is `image/heic`/`image/heif`, or a `.heic`/`.heif` filename) and convert:
+   ```ts
+   if (isHeic(input)) input = await heic2any({ blob: input, toType: 'image/jpeg' });
+   // …then fall through to the normal createImageBitmap/canvas path
+   ```
+3. **Lazy-import** `heic2any` so the multi-MB WASM only loads when a HEIC is actually provided (zero cost for the common JPEG/PNG path).
 
-- Israeli check digit: known-valid + known-invalid numbers, padding edge cases.
-- Fuzzy match: 0/1/2/3 diff, length mismatch, non-digit junk.
-- MRZ parse: valid TD3 sample, corrupted checksum.
-- Result shaping: each `Decision` branch, reason codes present.
-- Privacy: no-network assertion during `verify()`.
+Trade-offs: libheif WASM adds a few MB; conversion is an extra decode + JPEG re-encode (lossy, slower) before OCR. Cheaper non-goal alternative: keep the explicit "convert to JPEG/PNG" error and let users/iOS handle conversion.
+
+## 12. Resolved decisions (were open questions)
+
+1. **Fuzzy match** → **Levenshtein ≤ 2** (Section 7) — chosen after real OCR showed inserted/dropped digits.
+2. **Authenticity threshold/weights** → `0.55` with check-digit/MRZ-checksum as the dominant signal (Section 6); kept conservative so a failed check digit cannot pass on keywords alone.
+3. **`id` ID-card vs licence** → stays **agnostic**: both yield the 9-digit Israeli ID; claim-aware selection picks the right candidate when several numbers are present.
+4. Debug artifacts in the result → not exposed; deferred (no consumer need yet).
+
+## 13. Tests (delivered — 56 tests, `npm test`)
+
+| Area | File | Covers |
+| :-- | :-- | :-- |
+| Israeli check digit | `israeli-id.test.ts` | valid/invalid numbers, normalize/pad |
+| Fuzzy match | `fuzzy-match.test.ts` | exact/fuzzy/none, edit-distance incl. dropped digit |
+| MRZ | `mrz-parse.test.ts` | TD3 parse, `mrzCheckDigit`, tolerant `parseTd3Line2` |
+| Number extraction | `israeli-id-extractor.test.ts` | candidates incl. spaced-ID join, keywords |
+| Result shaping | `verify-flow.test.ts` | every `Decision` branch, claim-aware selection (id + passport, both numbers), input validation throws |
+| Authenticity | `authenticity.test.ts` | threshold, weighted signals, empty signals |
+| OCR engine | `paddle-ocr-engine.test.ts` | line-join + confidence aggregation |
+| Privacy | `privacy.test.ts` | zero `fetch`/`XHR`/`sendBeacon` during `verify()` |
+| Real OCR | `real-ocr.integration.test.ts` | PaddleOCR on the specimen → extractor (Node) |
+
+Cross-browser (Chrome/Safari) and the full canvas/ONNX path are verified manually via the demo.
 
 ## 14. STRETCH — on-device detector ("does it look like a real ID?")
 

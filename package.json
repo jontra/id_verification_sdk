@@ -1,0 +1,49 @@
+{
+  "name": "id-verification-sdk",
+  "version": "0.0.0",
+  "description": "Client-side identity document verification SDK (browser, no upload).",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo": "vite --config demo/vite.config.ts"
+  },
+  "dependencies": {
+    "@gutenye/ocr-browser": "^1.4.8",
+    "@gutenye/ocr-models": "^1.4.2",
+    "mrz": "^4.1.0",
+    "tesseract.js": "^5.1.0"
+  },
+  "devDependencies": {
+    "@gutenye/ocr-node": "^1.4.8",
+    "@types/node": "^25.9.1",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "jsdom": "^25.0.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "sharp": "^0.34.5",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
+  }
+}
