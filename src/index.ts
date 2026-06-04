@@ -8,6 +8,7 @@ export type {
   PaddleDetectorFactory,
   DetectedLine,
 } from './ocr/paddle-ocr-engine.js';
+export type { OcrRunner, OcrResult, OcrWord } from './extractors/extractor.js';
 
 export type {
   DocumentType,
@@ -25,6 +26,7 @@ export type {
   ReasonCode,
   ReasonSeverity,
   OcrOptions,
+  OcrEngine,
   IdVerifierOptions,
   VerifyOptions,
   IdVerifier,

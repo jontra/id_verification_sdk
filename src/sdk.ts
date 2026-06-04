@@ -50,7 +50,10 @@ export function createIdVerifier(
   options: IdVerifierOptions = {},
   deps: VerifierDeps = {},
 ): IdVerifier {
+  // OCR engine resolution: public `ocrEngine` option (e.g. a PaddleOcrEngine)
+  // wins; then the internal test seam; else the built-in Tesseract engine.
   const ocr =
+    options.ocrEngine ??
     deps.ocr ??
     new OcrEngine({
       languages: options.ocr?.languages ?? DEFAULT_LANGUAGES,

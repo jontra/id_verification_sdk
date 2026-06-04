@@ -52,7 +52,7 @@ export function App() {
   function getVerifier(): IdVerifier {
     if (!verifierRef.current) {
       // Inject PaddleOCR (PP-OCR) — the engine that reads real card photos.
-      verifierRef.current = createIdVerifier({}, { ocr: createPaddleEngine() });
+      verifierRef.current = createIdVerifier({ ocrEngine: createPaddleEngine() });
     }
     return verifierRef.current;
   }

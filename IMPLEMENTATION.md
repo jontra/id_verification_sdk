@@ -51,10 +51,11 @@ Build order + checklist. Detail lives in [DESIGN.md](./DESIGN.md). Boxes get tic
 Validated in Node: PaddleOCR reads `034521971` from the casual ID-card/licence photos that defeated Tesseract; Tesseract+MRZ-charset reads passport MRZ line 2 (passport no. `22441264` + valid check digit). Now productionize:
 
 - [x] Switch fuzzy match → **Levenshtein ≤2** (tolerates OCR insert/drop, e.g. `224412264` vs `22441264`) — **tests**
-- [ ] **PaddleOCR engine** (`id`/licence): `@gutenye/ocr-browser` + `@gutenye/ocr-models` via ONNX Runtime Web, self-hosted; implements `OcrRunner`. Node tests via `@gutenye/ocr-node`.
-- [ ] **Orientation-retry** (shared): try 0/90/180/270, keep the orientation whose result validates (checksum-valid Israeli ID / parseable MRZ / best claim match).
-- [ ] **Passport MRZ (robust, option b)**: Tesseract MRZ charset (`A-Z0-9<`) on located+oriented band → `mrz` parse, with **tolerant fallback** (position-based line-2 field extraction; validate passport-number + personal-number check digits independently).
-- [ ] Wire engines per document type into the extractors (registry already supports it).
-- [ ] **Integration tests** on real images: IMG_2731 (id), IMG_2730 (licence), IMG_2734 (passport) across rotations.
-- [ ] Demo: load self-hosted PP-OCR models; verify Chrome + Safari.
-- [ ] Cleanup: remove dead-end deps (`@zxing/library`, `zxing-wasm`); keep `sharp`/`@gutenye/ocr-node` as dev-only for Node tests.
+- [x] **PaddleOCR engine** (`PaddleOcrEngine`): PP-OCR via injected detector (`@gutenye/ocr-browser`); implements `OcrRunner`; public `ocrEngine` option. **tests** (line-join)
+- [x] **Passport MRZ (robust)**: reused PaddleOCR — `findMrzCandidates` + tolerant `parseTd3Line2`; returns passport number **and** national ID; check-digit validated. **tests**
+- [x] Wire engine via public `ocrEngine` option; demo injects PaddleOCR. All 3 types verify in the demo.
+- [x] **Integration test** (PaddleOCR via `@gutenye/ocr-node`) on the specimen; real images validated manually (gitignored for privacy).
+- [x] Demo: self-hosted PP-OCR models (`/assets`); ORT wasm via CDN (dev) — production self-host pending.
+- [x] Cleanup: removed `@zxing/library`, `zxing-wasm`; `sharp`/`@gutenye/ocr-node` kept dev-only.
+- [ ] **Orientation-retry** (shared, 0/90/180/270) — pending; current photos work at as-captured EXIF orientation.
+- [ ] Self-host ORT wasm in the demo (Vite asset-copy) for full no-CDN privacy.

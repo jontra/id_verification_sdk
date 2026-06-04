@@ -8,20 +8,20 @@ Supports three variants: **Israeli ID card**, **Israeli driver's license** (both
 
 ## Features
 
-- 🔒 **100% client-side** — OCR, parsing, and validation run in JS/WASM. Zero network during verification.
-- 🪪 Extracts the document number, verifies it against the user's claimed number.
-- ✅ Israeli ID **check-digit** validation; passport **MRZ** parsing.
-- 🔁 **Fuzzy match** tolerating up to 2 differing digits (OCR-error aware).
+- 🔒 **Image never leaves the device** — OCR, parsing, and validation run locally in JS/WASM. No upload, no cloud OCR.
+- 🪪 Reads real, casual phone photos: **PaddleOCR (PP-OCR)** via ONNX Runtime Web localizes the number on cluttered/guilloché/rotated cards.
+- ✅ Israeli ID **check-digit** validation; passport **MRZ** (tolerant TD3 line-2) parsing.
+- 🔁 **Fuzzy match** (Levenshtein ≤ 2 edits) — OCR insert/drop tolerant.
+- 🧩 Engine-agnostic (`OcrRunner`); claim-aware candidate selection; discriminated result.
 - 📦 Framework-agnostic; ships with a minimal React demo.
 
 ## Privacy guarantee
 
-The hard constraint: **no image/document data leaves the device.** No cloud OCR, no upload, no third-party API.
+The hard constraint: **the document image never leaves the device.** No cloud OCR, no upload — all recognition runs locally on the pixels (PP-OCR via ONNX Runtime Web; Tesseract + an in-browser MRZ parser for passports).
 
 How it's enforced and made verifiable:
-- All processing is local (Tesseract.js WASM + an in-browser MRZ parser).
-- Model/WASM assets are **self-hosted** (same origin), never a runtime third-party CDN.
-- A test asserts **zero** `fetch`/`XHR`/`sendBeacon` calls across a full `verify()`.
+- **Zero network during `verify()`** — a test spies on `fetch`/`XHR`/`sendBeacon` and asserts no calls across a full verification.
+- The only network is **one-time model/runtime asset loading at `warmup()`** (not image data). The SDK supports serving these **same-origin** (self-hosted) — the demo serves the PP-OCR models from `/assets`. ⚠️ The demo currently loads the onnxruntime-web *wasm* from a CDN for dev convenience; **production should self-host it too** (see [DESIGN.md §9/§10](./DESIGN.md#9-ocr-engines--library-choices-justify-in-readme)).
 
 See [DESIGN.md § Privacy enforcement](./DESIGN.md#10-privacy-enforcement-must-be-demonstrable).
 
@@ -34,13 +34,21 @@ npm install id-verification-sdk
 ## Quick start
 
 ```ts
-import { createIdVerifier } from 'id-verification-sdk';
+import { createIdVerifier, PaddleOcrEngine } from 'id-verification-sdk';
 
-const verifier = await createIdVerifier();
+// Inject the PP-OCR engine (recommended — reads real card photos). Models and
+// the ONNX runtime should be self-hosted; see demo/App.tsx for full wiring.
+const ocrEngine = new PaddleOcrEngine(async () => {
+  const Ocr = (await import('@gutenye/ocr-browser')).default;
+  return Ocr.create({ models: { detectionPath, recognitionPath, dictionaryPath } });
+});
+
+const verifier = createIdVerifier({ ocrEngine });   // synchronous; assets load lazily
+await verifier.warmup();                             // optional: preload models
 
 const result = await verifier.verify({
   documentType: 'id',          // 'id' | 'passport'
-  claimedNumber: '123456782',
+  claimedNumber: '012345678',
   image: file,                 // Blob | File | ImageData
 });
 
@@ -48,8 +56,10 @@ if (result.decision === 'verified') {
   // authentic document AND number matches
 }
 
-verifier.dispose();            // free WASM workers when done
+await verifier.dispose();
 ```
+
+> Without an injected `ocrEngine`, the SDK falls back to a built-in Tesseract engine — fine for clean scans, but PaddleOCR is what reads casual real-world photos. The [demo](#demo) shows the complete browser wiring (model paths + ONNX wasm).
 
 ## Result
 
@@ -68,14 +78,14 @@ It also carries `authenticity` (certificate + confidence + signals), `numberMatc
 
 Two extraction regimes, chosen by `documentType`:
 
-- **Passport** → locate + parse the **MRZ** (self-checksummed, deterministic).
-- **ID / driver's license** → OCR (Tesseract.js) → find the 9-digit number → validate with the **Israeli check digit**.
+- **ID card / driver's license** (`'id'`) → **PaddleOCR (PP-OCR)** localizes + reads text on the card → collect digit-run candidates → validate with the **Israeli check digit**.
+- **Passport** (`'passport'`) → PaddleOCR reads the **MRZ**, parsed **tolerantly** from TD3 line 2 (passport number + check digit, *and* the national ID in the personal-number field — so either can be claimed).
 
-The check digit both validates the number and serves as a strong authenticity signal. Details, pipeline diagram, and library choices: [DESIGN.md](./DESIGN.md#2-key-insight-driving-the-architecture).
+The extractor only *finds* candidate numbers; the flow does **claim-aware selection** (the candidate closest to the claimed number wins) — so a card showing several numbers (e.g. ID + licence number) resolves correctly. Check digit / MRZ checksum feed authenticity, not selection. Details and the "why PaddleOCR" findings: [DESIGN.md §9](./DESIGN.md#9-ocr-engines--library-choices-justify-in-readme).
 
 ## Fuzzy matching
 
-Claimed vs. extracted numbers are compared with a **position-aware (Hamming) difference** on zero-padded digits; **0** = exact, **1–2** = fuzzy match, **>2** = mismatch. Chosen because OCR digit errors are overwhelmingly in-place substitutions. Rationale: [DESIGN.md § Fuzzy match rule](./DESIGN.md#7-fuzzy-match-rule-to-justify-in-readme).
+Claimed vs. extracted numbers are compared by **Levenshtein edit distance** (after normalizing — digits + left-pad to 9 for Israeli IDs, alphanumeric for passports): **0** = exact, **1–2** = fuzzy match, **>2** = mismatch. Edit distance (not Hamming) because real OCR errors include inserted/dropped characters, not just substitutions. Rationale: [DESIGN.md § Fuzzy match rule](./DESIGN.md#7-fuzzy-match-rule-to-justify-in-readme).
 
 ## Authenticity — what it does and does not guarantee
 

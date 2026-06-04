@@ -2,6 +2,7 @@
  * Public types for the Identity Verification SDK.
  * See DESIGN.md §3 (Public API).
  */
+import type { OcrRunner } from './extractors/extractor.js';
 
 // ---------------------------------------------------------------------------
 // Input
@@ -126,7 +127,18 @@ export interface OcrOptions {
   modelBaseUrl?: string;
 }
 
+/** An OCR engine the SDK can drive (e.g. PaddleOcrEngine or the Tesseract one). */
+export type OcrEngine = OcrRunner &
+  Partial<{ warmup(): Promise<void>; dispose(): Promise<void> }>;
+
 export interface IdVerifierOptions {
+  /**
+   * OCR engine to use. Inject a `PaddleOcrEngine` (recommended — reads real
+   * card photos) here. If omitted, the SDK falls back to a built-in Tesseract
+   * engine configured via `ocr` below.
+   */
+  ocrEngine?: OcrEngine;
+  /** Tesseract fallback config (used only when `ocrEngine` is not provided). */
   ocr?: OcrOptions;
   /** Minimum mean OCR word confidence to trust extraction. Default 0.5. */
   minOcrConfidence?: number;

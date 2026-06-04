@@ -56,21 +56,7 @@ export class PaddleOcrEngine implements OcrRunner {
   async recognize(image: NormalizedImage): Promise<OcrResult> {
     const detector = await this.ensureDetector();
     const lines = await detector.detect(toDataUrl(image));
-
-    const text = lines.map((l) => l.text).join('\n');
-    const scored = lines.filter((l) => typeof l.mean === 'number');
-    const confidence =
-      scored.length > 0
-        ? scored.reduce((s, l) => s + (l.mean as number), 0) / scored.length
-        : lines.length > 0
-          ? 0.9 // backend gave no score but did detect text
-          : 0;
-
-    return {
-      text,
-      confidence,
-      words: lines.map((l) => ({ text: l.text, confidence: l.mean ?? 0.9 })),
-    };
+    return linesToOcrResult(lines);
   }
 
   // PP-OCR backends hold no terminable workers in the way Tesseract does;
@@ -79,6 +65,22 @@ export class PaddleOcrEngine implements OcrRunner {
     this.detector = null;
     this.initPromise = null;
   }
+}
+
+/** Combine PP-OCR detected lines into an OcrResult (newline-joined text). */
+export function linesToOcrResult(lines: DetectedLine[]): OcrResult {
+  const scored = lines.filter((l) => typeof l.mean === 'number');
+  const confidence =
+    scored.length > 0
+      ? scored.reduce((s, l) => s + (l.mean as number), 0) / scored.length
+      : lines.length > 0
+        ? 0.9 // backend detected text but gave no score
+        : 0;
+  return {
+    text: lines.map((l) => l.text).join('\n'),
+    confidence,
+    words: lines.map((l) => ({ text: l.text, confidence: l.mean ?? 0.9 })),
+  };
 }
 
 /** Render decoded pixels to a PNG data URL the detector can load. */
