@@ -114,6 +114,39 @@ async function decodeBlob(blob: Blob): Promise<NormalizedImage> {
   return { pixels, width: w, height: h, canvas };
 }
 
+/**
+ * Rotate a NormalizedImage clockwise by 90/180/270 degrees (for orientation
+ * retry — OCR engines read horizontal text, not text rotated a full 90°).
+ * Throws `ImageDecodeError` if no canvas is available (e.g. non-browser test
+ * env), which the caller treats as "this orientation can't be tried".
+ */
+export function rotateNormalizedImage(
+  image: NormalizedImage,
+  degrees: 90 | 180 | 270,
+): NormalizedImage {
+  const swap = degrees === 90 || degrees === 270;
+  const outW = swap ? image.height : image.width;
+  const outH = swap ? image.width : image.height;
+
+  // Source drawable: reuse the existing canvas, or build one from the pixels.
+  let source: CanvasImageSource;
+  if (image.canvas) {
+    source = image.canvas;
+  } else {
+    const src = makeCanvas(image.width, image.height);
+    src.ctx.putImageData(image.pixels, 0, 0);
+    source = src.canvas;
+  }
+
+  const { canvas, ctx } = makeCanvas(outW, outH);
+  ctx.translate(outW / 2, outH / 2);
+  ctx.rotate((degrees * Math.PI) / 180);
+  ctx.drawImage(source, -image.width / 2, -image.height / 2);
+
+  const pixels = ctx.getImageData(0, 0, outW, outH);
+  return { pixels, width: outW, height: outH, canvas };
+}
+
 /** Normalize any supported input into decoded RGBA pixels. */
 export async function toNormalizedImage(
   input: Blob | File | ImageData,

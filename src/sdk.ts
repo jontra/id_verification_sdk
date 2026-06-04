@@ -16,16 +16,27 @@ import type {
   VerificationResult,
   VerifyOptions,
 } from './types.js';
-import { ExtractorRegistry, type ExtractContext, type OcrRunner } from './extractors/extractor.js';
+import {
+  ExtractorRegistry,
+  type ExtractContext,
+  type Extractor,
+  type ExtractionOutput,
+  type OcrRunner,
+} from './extractors/extractor.js';
+import { toNormalizedImage, rotateNormalizedImage, ImageDecodeError } from './image/image-input.js';
 import type { NormalizedImage } from './image/image-input.js';
-import type { ImageInput } from './types.js';
+import type { DocumentType, ImageInput } from './types.js';
 import { PassportMrzExtractor } from './extractors/passport-mrz.extractor.js';
 import { IsraeliIdExtractor } from './extractors/israeli-id.extractor.js';
 import { OcrEngine } from './ocr/ocr-engine.js';
-import { toNormalizedImage, ImageDecodeError } from './image/image-input.js';
 import { buildCertificate } from './authenticity/authenticity.js';
 import { aspectRatioSignal } from './authenticity/signals.js';
-import { fuzzyMatch, normalizeForMatch, type FuzzyMatchResult } from './matching/fuzzy-match.js';
+import {
+  fuzzyMatch,
+  normalizeForMatch,
+  levenshtein,
+  type FuzzyMatchResult,
+} from './matching/fuzzy-match.js';
 import { reason, SdkInputError } from './utils/errors.js';
 import { weightedScore } from './utils/confidence.js';
 
@@ -129,10 +140,20 @@ export function createIdVerifier(
     }
     throwIfAborted(signal);
 
-    // 2. Extract (registry always has both built-in types).
+    // 2. Extract, with orientation retry. OCR engines read horizontal text but
+    //    not text rotated a full 90°/270°, so a sideways capture only reads at
+    //    the right orientation. Try 0/90/270/180 and keep the best read; stop
+    //    early once we get a checksum-valid number (a successful read).
     const extractor = registry.get(input.documentType)!;
     const ctx: ExtractContext = { signal, minOcrConfidence, ocr };
-    const extraction = await extractor.extract(image, ctx);
+    const extraction = await extractWithOrientation(
+      extractor,
+      image,
+      ctx,
+      claimedNorm,
+      input.documentType,
+      fuzzyTolerance,
+    );
     throwIfAborted(signal);
 
     const signals = [
@@ -218,6 +239,68 @@ function normalizeExtracted(
   return documentType === 'passport'
     ? normalizeForMatch(extracted, { alphanumeric: true })
     : normalizeForMatch(extracted, { padLength: 9 });
+}
+
+const ROTATIONS = [90, 270, 180] as const;
+
+/**
+ * Run extraction across orientations and keep the best read. Orientation 0 is
+ * tried first; if it yields a checksum-valid number we stop (a successful read).
+ * Otherwise we rotate the image 90/270/180 and retry — OCR can't read text
+ * rotated a full 90°. Rotation needs a canvas; where unavailable (e.g. tests)
+ * the rotate throws and that orientation is simply skipped.
+ */
+async function extractWithOrientation(
+  extractor: Extractor,
+  image: NormalizedImage,
+  ctx: ExtractContext,
+  claimedNorm: string,
+  documentType: DocumentType,
+  tolerance: number,
+): Promise<ExtractionOutput> {
+  let best: { extraction: ExtractionOutput; score: number } | null = null;
+
+  const consider = (extraction: ExtractionOutput): boolean => {
+    const score = scoreExtraction(extraction, claimedNorm, documentType, tolerance);
+    if (!best || score > best.score) best = { extraction, score };
+    return hasValidChecksum(extraction); // early-exit signal: successful read
+  };
+
+  if (consider(await extractor.extract(image, ctx))) return best!.extraction;
+
+  for (const deg of ROTATIONS) {
+    let rotated: NormalizedImage;
+    try {
+      rotated = rotateNormalizedImage(image, deg);
+    } catch {
+      continue; // can't rotate in this environment
+    }
+    if (consider(await extractor.extract(rotated, ctx))) break;
+  }
+  return best!.extraction;
+}
+
+function hasValidChecksum(e: ExtractionOutput): boolean {
+  return e.signals.some(
+    (s) => (s.kind === 'check_digit_valid' || s.kind === 'mrz_checksums_valid') && s.passed,
+  );
+}
+
+/** Rank an orientation's read: valid+claim-match > valid > claim-match > any > none. */
+function scoreExtraction(
+  e: ExtractionOutput,
+  claimedNorm: string,
+  documentType: DocumentType,
+  tolerance: number,
+): number {
+  const valid = hasValidChecksum(e);
+  const matched = e.candidates.some(
+    (c) => levenshtein(claimedNorm, normalizeExtracted(documentType, c)) <= tolerance,
+  );
+  if (valid && matched) return 5;
+  if (valid) return 4;
+  if (matched) return 3;
+  return e.candidates.length > 0 ? 1 : 0;
 }
 
 /**

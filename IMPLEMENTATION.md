@@ -57,5 +57,5 @@ Validated in Node: PaddleOCR reads `034521971` from the casual ID-card/licence p
 - [x] **Integration test** (PaddleOCR via `@gutenye/ocr-node`) on the specimen; real images validated manually (gitignored for privacy).
 - [x] Demo: self-hosted PP-OCR models (`/assets`); ORT wasm via CDN (dev) — production self-host pending.
 - [x] Cleanup: removed `@zxing/library`, `zxing-wasm`; `sharp`/`@gutenye/ocr-node` kept dev-only.
-- [ ] **Orientation-retry** (shared, 0/90/180/270) — pending; current photos work at as-captured EXIF orientation.
+- [x] **Orientation-retry** (shared, 0/90/270/180): `verify()` retries rotations, keeps best read, early-exits on a checksum-valid number. Works for left/right-rotated captures.
 - [ ] Self-host ORT wasm in the demo (Vite asset-copy) for full no-CDN privacy.
