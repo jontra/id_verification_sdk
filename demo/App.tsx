@@ -120,7 +120,17 @@ export function App() {
 
         <label>
           Document image{' '}
-          <input type="file" accept={ACCEPT_ATTR} onChange={onFileChange} />
+          <input
+            type="file"
+            accept={ACCEPT_ATTR}
+            // Clear the value before the picker opens so re-selecting the SAME
+            // filename still fires onChange (and re-reads fresh bytes if the
+            // file changed on disk). Without this, a same-path pick is a no-op.
+            onClick={(e) => {
+              (e.target as HTMLInputElement).value = '';
+            }}
+            onChange={onFileChange}
+          />
           <div style={{ color: '#57606a', fontSize: '0.85em', marginTop: '0.25rem' }}>
             Supported formats: {SUPPORTED_LABEL}. HEIC (iPhone) is not supported — convert to
             JPEG/PNG first.
