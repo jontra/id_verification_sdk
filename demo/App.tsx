@@ -40,11 +40,23 @@ const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const ACCEPT_ATTR = ACCEPTED_TYPES.join(',');
 const SUPPORTED_LABEL = 'JPEG, PNG, WebP';
 
+// File System Access API (Chrome) — typed minimally; absent on Safari.
+type PickedFileHandle = { name: string; getFile(): Promise<File> };
+type FilePickerWindow = Window & {
+  showOpenFilePicker?: (options?: { multiple?: boolean }) => Promise<PickedFileHandle[]>;
+};
+
 export function App() {
   const verifierRef = useRef<IdVerifier | null>(null);
   const [documentType, setDocumentType] = useState<DocumentType>('id');
   const [claimedNumber, setClaimedNumber] = useState('');
-  const [file, setFile] = useState<File | null>(null);
+  // A "source" that yields the image bytes on demand. With the File System
+  // Access API (Chrome) `read()` calls handle.getFile() — re-reading the CURRENT
+  // file from disk on every verify. The <input> fallback (Safari) snapshots the
+  // bytes at selection, since a File handle goes stale after on-disk edits.
+  const sourceRef = useRef<{ name: string; read: () => Promise<Blob> } | null>(null);
+  const fallbackInputRef = useRef<HTMLInputElement | null>(null);
+  const [sourceName, setSourceName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<VerificationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,24 +69,54 @@ export function App() {
     return verifierRef.current;
   }
 
-  function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0] ?? null;
-    if (f && !ACCEPTED_TYPES.includes(f.type)) {
-      setError(
-        `Unsupported file type${f.type ? ` (${f.type})` : ''}. Supported: ${SUPPORTED_LABEL}. HEIC is not supported.`,
-      );
-      setFile(null);
-      e.target.value = '';
+  function unsupportedError(type: string) {
+    setError(
+      `Unsupported file type${type ? ` (${type})` : ''}. Supported: ${SUPPORTED_LABEL}. HEIC is not supported.`,
+    );
+  }
+
+  /** Choose an image. Prefer the File System Access API so verify re-reads from disk. */
+  async function chooseImage() {
+    setError(null);
+    setResult(null);
+    const picker = (window as FilePickerWindow).showOpenFilePicker;
+    if (picker) {
+      let handle: PickedFileHandle | undefined;
+      try {
+        [handle] = await picker({ multiple: false });
+      } catch {
+        return; // user cancelled
+      }
+      if (!handle) return;
+      const h = handle;
+      sourceRef.current = { name: h.name, read: () => h.getFile() };
+      setSourceName(h.name);
+    } else {
+      fallbackInputRef.current?.click(); // Safari etc. → <input> snapshot
+    }
+  }
+
+  /** Fallback path: snapshot bytes at selection (can't re-read from disk). */
+  async function onFallbackPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    if (!ACCEPTED_TYPES.includes(f.type)) {
+      unsupportedError(f.type);
       return;
     }
     setError(null);
-    setFile(f);
+    setResult(null);
+    const bytes = await f.arrayBuffer();
+    const blob = new Blob([bytes], { type: f.type });
+    sourceRef.current = { name: f.name, read: () => Promise.resolve(blob) };
+    setSourceName(f.name);
   }
 
   async function onVerify() {
     setError(null);
     setResult(null);
-    if (!file) {
+    if (!sourceRef.current) {
       setError('Please choose an image.');
       return;
     }
@@ -84,7 +126,12 @@ export function App() {
     }
     setBusy(true);
     try {
-      const r = await getVerifier().verify({ documentType, claimedNumber, image: file });
+      const image = await sourceRef.current.read(); // re-reads from disk (File System Access API)
+      if (!ACCEPTED_TYPES.includes(image.type)) {
+        unsupportedError(image.type);
+        return;
+      }
+      const r = await getVerifier().verify({ documentType, claimedNumber, image });
       setResult(r);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -118,24 +165,24 @@ export function App() {
           />
         </label>
 
-        <label>
+        <div>
           Document image{' '}
+          <button type="button" onClick={chooseImage} style={{ padding: '0.25rem 0.75rem' }}>
+            {sourceName ? 'Change image…' : 'Choose image…'}
+          </button>
+          {sourceName && <span style={{ marginLeft: '0.5rem' }}>{sourceName}</span>}
           <input
+            ref={fallbackInputRef}
             type="file"
             accept={ACCEPT_ATTR}
-            // Clear the value before the picker opens so re-selecting the SAME
-            // filename still fires onChange (and re-reads fresh bytes if the
-            // file changed on disk). Without this, a same-path pick is a no-op.
-            onClick={(e) => {
-              (e.target as HTMLInputElement).value = '';
-            }}
-            onChange={onFileChange}
+            style={{ display: 'none' }}
+            onChange={onFallbackPick}
           />
           <div style={{ color: '#57606a', fontSize: '0.85em', marginTop: '0.25rem' }}>
             Supported formats: {SUPPORTED_LABEL}. HEIC (iPhone) is not supported — convert to
-            JPEG/PNG first.
+            JPEG/PNG first. The image is re-read from disk on each verify (Chrome).
           </div>
-        </label>
+        </div>
 
         <button onClick={onVerify} disabled={busy} style={{ padding: '0.5rem 1rem', width: 'fit-content' }}>
           {busy ? 'Verifying…' : 'Verify'}
